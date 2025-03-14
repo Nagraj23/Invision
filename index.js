@@ -1,33 +1,41 @@
 const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
 const mongoose = require("mongoose");
-const User = require("./models/user");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const axios = require("axios");
-require('dotenv').config(); 
+const cors = require("cors");
+const bodyParser = require("body-parser");
+require("dotenv").config();
+
+const User = require("./models/user");
 
 const app = express();
 
-app.use(bodyParser.json());
+// Middleware
 app.use(cors({ origin: "*" })); // Allow frontend access
-app.use(express.json());
+app.use(bodyParser.json());
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+// Load environment variables
+const { GEMINI_API_KEY, MONGO_URI } = process.env;
+const GEMINI_API_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
+// Connect to MongoDB
 mongoose
-  .connect("mongodb://localhost:27017/InVision", {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
+  .connect( process.env.MONGO_URI || "mongodb+srv://Nagraj:Nagraj%401323@cluster0.zd0wy.mongodb.net/InVision?retryWrites=true&w=majority")
   .then(() => console.log("Connected to MongoDB"))
-  .catch((err) => console.log("Failed to connect to MongoDB", err));
+  .catch((err) => console.error("Failed to connect to MongoDB", err));
 
+// Routes
+
+// Register User
 app.post("/register", async (req, res) => {
   try {
     const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: "All fields are required!" });
+    }
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -35,30 +43,47 @@ app.post("/register", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 12);
+    const newUser = new User({ username, email, password: hashedPassword });
 
-    const user = new User({ username, email, password: hashedPassword });
-    await user.save();
-
-    res.status(201).json({ message: "User created!" });
+    await newUser.save();
+    res.status(201).json({ message: "User created successfully!" });
   } catch (error) {
-    console.error(error);
+    console.error("Error in register:", error);
     res.status(500).json({ message: "Server error!" });
   }
 });
 
+// Login User
 app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email });
-  if (!user) {
-    return res.status(401).json({ message: "Invalid email or password" });
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ message: "All fields are required!" });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+
+    const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, {
+      expiresIn: "1h",
+    });
+
+    res.json({ message: "Login successful", token });
+  } catch (error) {
+    console.error("Error in login:", error);
+    res.status(500).json({ message: "Server error!" });
   }
-  const isMatch = await bcrypt.compare(password, user.password);
-  if (!isMatch) {
-    return res.status(401).json({ message: "Invalid email or password" });
-  }
-  const token = jwt.sign({ id: user.id }, "secretkey", { expiresIn: "1h" });
-  res.json({ message: "Login successful", token });
 });
+
+// Chat API
 app.post("/chat", async (req, res) => {
   try {
     const { message } = req.body;
@@ -106,11 +131,13 @@ app.post("/chat", async (req, res) => {
   }
 });
 
-
+// Root Route
 app.get("/", (req, res) => {
-  res.send("Welcome to InVision");
+  res.send("Welcome to InVision API");
 });
 
-app.listen(3000, () => {
-  console.log("Server is running on port 3000");
+// Start Server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
